@@ -1,0 +1,175 @@
+; Simon Says Game – Full Interaction Version (Fixed LED Stuck On Issue)
+; Waits for button press to start, checks 3-button user input against LED pattern
+; Correct → blink once; Wrong → blink 3x and replay pattern
+
+.include "m328pdef.inc"
+
+; ----------------------
+; Constants and Equates
+; ----------------------
+.equ LED_DDR   = DDRB
+.equ LED_PORT  = PORTB
+
+.equ LED0 = PB4       ; RED
+.equ LED1 = PB2       ; GREEN
+.equ LED2 = PB0       ; BLUE
+
+.equ BTN_DDR   = DDRD
+.equ BTN_PORT  = PORTD
+.equ BTN_PIN   = PIND
+
+.equ BTN0 = PD2
+.equ BTN1 = PD4
+.equ BTN2 = PD6
+
+.equ DELAY = 31250      ; 0.5 sec
+.equ FLASH_DELAY = 20000
+
+.equ SEQ_LEN = 3
+.equ BASE_ADDR = 0x60
+
+; ----------------------
+; Registers
+; ----------------------
+.def seqval = r16
+.def index  = r17
+.def flag   = r18
+.def input0 = r19
+.def temp   = r22
+.def delayh = r23
+.def delayl = r24
+
+.cseg
+.org 0x00
+    rjmp RESET
+
+; ----------------------
+; RESET
+; ----------------------
+RESET:
+    ldi temp, (1 << LED0) | (1 << LED1) | (1 << LED2)
+    out LED_DDR, temp
+
+    ldi temp, 0x00
+    out BTN_DDR, temp
+    ldi temp, (1 << BTN0) | (1 << BTN1) | (1 << BTN2)
+    out BTN_PORT, temp
+
+    ; Store pattern: RED, GREEN, BLUE
+    ldi temp, (1 << LED0)
+    sts BASE_ADDR + 0, temp
+    ldi temp, (1 << LED1)
+    sts BASE_ADDR + 1, temp
+    ldi temp, (1 << LED2)
+    sts BASE_ADDR + 2, temp
+
+    rcall BlinkAllOnce
+
+WaitForStart:
+    sbis BTN_PIN, BTN0
+    rjmp StartGame
+    sbis BTN_PIN, BTN1
+    rjmp StartGame
+    sbis BTN_PIN, BTN2
+    rjmp StartGame
+    rjmp WaitForStart
+
+; ----------------------
+; Game Begins
+; ----------------------
+StartGame:
+    clr index
+
+NextStep:
+    ; Show current LED
+    ldi ZH, 0x00
+    ldi ZL, BASE_ADDR
+    add ZL, index
+    lpm seqval, Z
+    out LED_PORT, seqval
+    rcall DelayHalfSec
+
+    ; Turn LED off BEFORE checking input
+    ldi temp, 0x00
+    out LED_PORT, temp
+    rcall DelayHalfSec
+
+WaitInput:
+    clr input0
+
+CheckButtons:
+    sbis BTN_PIN, BTN0
+    rjmp Press0
+    sbis BTN_PIN, BTN1
+    rjmp Press1
+    sbis BTN_PIN, BTN2
+    rjmp Press2
+    rjmp CheckButtons
+
+Press0:
+    ldi input0, (1 << LED0)
+    rjmp WaitRelease
+Press1:
+    ldi input0, (1 << LED1)
+    rjmp WaitRelease
+Press2:
+    ldi input0, (1 << LED2)
+    rjmp WaitRelease
+
+WaitRelease:
+    sbic BTN_PIN, BTN0
+    sbic BTN_PIN, BTN1
+    sbic BTN_PIN, BTN2
+    rjmp WaitRelease
+
+Compare:
+    cp input0, seqval
+    breq Correct
+    rjmp Incorrect
+
+Correct:
+    rcall BlinkAllOnce
+    inc index
+    cpi index, SEQ_LEN
+    brlo NextStep
+    rjmp GameWin
+
+Incorrect:
+    rcall BlinkAllThrice
+    rjmp NextStep
+
+GameWin:
+    rcall BlinkAllThrice
+    rcall BlinkAllThrice
+    rjmp WaitForStart
+
+; ----------------------
+; Utility Subroutines
+; ----------------------
+BlinkAllOnce:
+    ldi temp, (1 << LED0) | (1 << LED1) | (1 << LED2)
+    out LED_PORT, temp
+    rcall DelayHalfSec
+    ldi temp, 0x00
+    out LED_PORT, temp
+    rcall DelayHalfSec
+    ret
+
+BlinkAllThrice:
+    ldi temp, 3
+BlinkLoop:
+    rcall BlinkAllOnce
+    dec temp
+    brne BlinkLoop
+    ret
+
+DelayHalfSec:
+    ldi delayh, high(DELAY)
+    ldi delayl, low(DELAY)
+    sts OCR1AH, delayh
+    sts OCR1AL, delayl
+DelayWait:
+    sbis TIFR1, OCF1A
+    rjmp DelayWait
+    sbi TIFR1, OCF1A
+    ret
