@@ -1,19 +1,18 @@
-; LED Pattern Guessing Game - FINAL CLEAN VERSION
-; Author: Nick (commented by ChatGPT for simplicity)
+
+; Author: Nick
+; LED Pattern Guessing Game
 
 .include "m328Pdef.inc"
 
-; -----------------------------
-; CONSTANTS
-; -----------------------------
-.equ LED0 = 0    ; LED pins (PORTB0-2)
-.equ LED1 = 1
-.equ LED2 = 2
-.equ BTN0 = 2    ; Button pins (PORTD2-4)
-.equ BTN1 = 3
-.equ BTN2 = 4
+.equ LED0 = 0    ; PORTB Pin 0 (LED1)
+.equ LED1 = 1    ; PORTB Pin 1 (LED2)
+.equ LED2 = 2    ; PORTB Pin 2 (LED3)
 
-; Game states
+.equ BTN0 = 2    ; PORTD Pin 2 
+.equ BTN1 = 3    ; PORTD Pin 3 
+.equ BTN2 = 4    ; PORTD Pin 4 
+
+                              ; Game states
 .equ STATE_WAIT_BUTTON = 0
 .equ STATE_SHOW_PATTERN = 1
 .equ STATE_COLLECT_INPUT = 2
@@ -22,81 +21,81 @@
 .equ STATE_FAIL = 5
 
 ; -----------------------------
-; DATA SEGMENT (SRAM storage)
+; SRAM Data (in .dseg)
 ; -----------------------------
 .dseg
-patterns: .byte 9    ; 3 patterns of 3 values each (LED numbers)
-guesses:  .byte 3    ; store user guesses
+patterns: .byte 9    ; 3 patterns, each 3 values (total 9 bytes)
+guesses:  .byte 3    ; 3 guesses per user attempt
 
 ; -----------------------------
 ; CODE SEGMENT
 ; -----------------------------
 .cseg
+
+; -----------------------------
+; INTERRUPT VECTOR TABLE
+; -----------------------------
 .org 0x0000
-rjmp RESET
+rjmp RESET         ; Reset handler
 .org 0x0002
-rjmp INT0_ISR
+rjmp INT0_ISR      ; External Interrupt Request 0 (PD2)
 .org 0x0004
-rjmp INT1_ISR
+rjmp INT1_ISR      ; External Interrupt Request 1 (PD3)
 .org 0x000A
-rjmp PCINT_ISR
+rjmp PCINT_ISR     ; Pin Change Interrupt (PD4)
 
-; -----------------------------
-; REGISTER DEFINITIONS
-; -----------------------------
-.def temp = r16
-.def btn_pressed = r17
-.def pattern_index = r18
-.def guess_index = r19
-.def state = r20
-.def zero = r21       ; holds constant zero (0)
-.def delay_lo = r24   ; delay counter low byte
-.def delay_hi = r25   ; delay counter high byte
+.def temp = r16          ; Temporary storage
+.def btn_pressed = r17   ; Latest button pressed value
+.def pattern_index = r18 ; Which pattern we are showing
+.def guess_index = r19   ; How many guesses have been entered
+.def state = r20         ; Current game state
+.def zero = r21          ; Constant 0 (clearing)
+.def delay_lo = r24      ; Software delay counter (low)
+.def delay_hi = r25      ; Software delay counter (high)
 
-; -----------------------------
-; RESET VECTOR - SETUP
-; -----------------------------
 RESET:
-    ; Setup stack
+                           ; Set up the Stack Pointer
     ldi temp, LOW(RAMEND)
     out SPL, temp
     ldi temp, HIGH(RAMEND)
     out SPH, temp
 
-    ; Set LEDs (PB0-PB2) as outputs
+                           ; Configure LED pins (PB0-PB2) as outputs
     ldi temp, (1<<LED0)|(1<<LED1)|(1<<LED2)
     out DDRB, temp
 
-    ; Enable internal pull-ups for buttons (PD2-PD4)
+                           ; Enable pull-up resistors on Button pins (PD2-PD4)
     ldi temp, (1<<BTN0)|(1<<BTN1)|(1<<BTN2)
     out PORTD, temp
 
-    ; External interrupts INT0, INT1 on falling edge
+                           ; Set INT0 and INT1 for falling edge detection
     ldi temp, (1<<ISC01)|(1<<ISC11)
     sts EICRA, temp
+
+                           ; Enable External Interrupts INT0 and INT1
     ldi temp, (1<<INT0)|(1<<INT1)
     sts EIMSK, temp
 
-    ; Enable pin change interrupt for PD4 (PCINT20)
+                           ; Enable Pin Change Interrupt on PCINT20 (PD4)
     ldi temp, (1<<PCIE2)
     sts PCICR, temp
     ldi temp, (1<<PCINT20)
     sts PCMSK2, temp
 
-    sei  ; Enable global interrupts
+    sei                    ; Enable Global Interrupts
 
-    ; Blink all LEDs at startup
-    ldi temp, 0x07
+                           ; Flash all LEDs together at startup
+    ldi temp, 0x07         ; Turn on PB0, PB1, PB2
     out PORTB, temp
     rcall Delay_750ms
-    clr temp
+    clr temp               ; Turn off LEDs
     out PORTB, temp
     rcall Delay_750ms
 
-    ; Load LED patterns into SRAM (using Y pointer)
+                              ; Pre-load game patterns into SRAM (patterns array)
     ldi r28, LOW(patterns)
     ldi r29, HIGH(patterns)
-
+                              ; Hard coded patterns
     ldi temp, 0
     st Y+, temp
     ldi temp, 1
@@ -118,40 +117,42 @@ RESET:
     ldi temp, 0
     st Y+, temp
 
-    ; Start game
+                            ; Start the game by waiting for button
     clr pattern_index
     ldi state, STATE_WAIT_BUTTON
     rjmp Main_Loop
 
-; -----------------------------
-; MAIN LOOP
-; -----------------------------
 Main_Loop:
+; Forever loop (game is interrupt-driven)
     rjmp Main_Loop
 
-; -----------------------------
-; INTERRUPTS
-; -----------------------------
-INT0_ISR: ldi btn_pressed, 0
-          rjmp Button_Pressed
+INT0_ISR:
+; Rightmost button pressed (PD2 / D2)
+    ldi btn_pressed, 0
+    rjmp Button_Pressed
 
-INT1_ISR: ldi btn_pressed, 1
-          rjmp Button_Pressed
+INT1_ISR:
+; Middle button pressed (PD3 / D3)
+    ldi btn_pressed, 1
+    rjmp Button_Pressed
 
 PCINT_ISR:
-    sbic PIND, BTN2
-    reti          ; No button press
+; Leftmost button pressed (PD4 / D4)
+    sbic PIND, BTN2      ; If pin still HIGH, ignore (no press)
+    reti
     ldi btn_pressed, 2
     rjmp Button_Pressed
 
 Button_Pressed:
+; Handle a button press based on current game state
     cpi state, STATE_WAIT_BUTTON
-    breq StartPattern
+    breq StartPattern    ; Start showing pattern
     cpi state, STATE_COLLECT_INPUT
-    breq RecordGuess
-    reti          ; Ignore button if wrong state
+    breq RecordGuess     ; Collect guess
+    reti                 ; Otherwise ignore
 
 StartPattern:
+; Start a new pattern showing phase
     clr guess_index
     ldi r28, LOW(guesses)
     ldi r29, HIGH(guesses)
@@ -161,30 +162,31 @@ StartPattern:
     reti
 
 RecordGuess:
+; Record each guess pressed
     st Y+, btn_pressed
     inc guess_index
     cpi guess_index, 3
-    breq CheckGuesses
+    breq CheckGuesses    ; After 3 guesses, check
     reti
 
 CheckGuesses:
+; Set state and jump to comparison
     ldi state, STATE_CHECK_INPUT
     rcall CompareGuesses
     reti
 
-; -----------------------------
-; SUBROUTINES
-; -----------------------------
 ShowPattern:
-    ; Set Z to start of correct pattern
+; Setup pointer Z to current pattern
     ldi r30, LOW(patterns)
     ldi r31, HIGH(patterns)
     add r30, pattern_index
     clr zero
     adc r31, zero
-    clr r22   ; 3-count for pattern
+
+    clr r22  ; counter for 3 blinks
 
 PatternLoop:
+; Blink each LED in pattern
     ld temp, Z+
     ldi r23, 1
     lsl r23
@@ -194,13 +196,16 @@ PatternLoop:
     clr temp
     out PORTB, temp
     rcall PatternDelay
+
     inc r22
     cpi r22, 3
     brne PatternLoop
     ret
 
 CompareGuesses:
-    ; Set pointers to patterns and guesses
+; Compare user's guesses to the pattern
+
+    ; Setup pointers
     ldi r30, LOW(patterns)
     ldi r31, HIGH(patterns)
     add r30, pattern_index
@@ -209,18 +214,20 @@ CompareGuesses:
 
     ldi r28, LOW(guesses)
     ldi r29, HIGH(guesses)
-    clr r22   ; compare count
+
+    clr r22 ; 3 comparisons
 
 CompareLoop:
     ld temp, Z+
     ld r23, Y+
     cp temp, r23
-    brne PatternFail
+    brne PatternFail    ; If mismatch, fail immediately
     inc r22
     cpi r22, 3
-    brne CompareLoop
+    brne CompareLoop    ; Otherwise keep comparing
 
 PatternSuccess:
+; Player matched pattern successfully
     ldi state, STATE_SUCCESS
     rcall SuccessFlash
     inc pattern_index
@@ -229,17 +236,21 @@ PatternSuccess:
     rjmp GameOver
 
 ReadyNextPattern:
+; Wait for next round
     ldi state, STATE_WAIT_BUTTON
     ret
 
 PatternFail:
+; Player guessed wrong
     ldi state, STATE_FAIL
     rcall FailFlash
     ldi state, STATE_WAIT_BUTTON
     ret
 
 SuccessFlash:
+; Blink all LEDs 3 times slowly
     ldi r22, 3
+
 SuccessLoop:
     ldi temp, 0x07
     out PORTB, temp
@@ -252,7 +263,9 @@ SuccessLoop:
     ret
 
 FailFlash:
+; Blink all LEDs 6 times rapidly
     ldi r22, 6
+
 FailLoop:
     ldi temp, 0x07
     out PORTB, temp
@@ -264,39 +277,45 @@ FailLoop:
     brne FailLoop
     ret
 
-; -----------------------------
-; DELAY ROUTINES
-; -----------------------------
 Delay_750ms:
+; Delay 750ms
     ldi delay_lo, 0xFF
     ldi delay_hi, 0x07
+
 DelayLoop750:
     sbiw delay_lo, 1
     brne DelayLoop750
     ret
 
 Delay_500ms:
+; Delay 500ms
     ldi delay_lo, 0xFF
     ldi delay_hi, 0x05
+
 DelayLoop500:
     sbiw delay_lo, 1
     brne DelayLoop500
     ret
 
 Delay_250ms:
+; Delay 250ms
     ldi delay_lo, 0xFF
     ldi delay_hi, 0x02
+
 DelayLoop250:
     sbiw delay_lo, 1
     brne DelayLoop250
     ret
 
 PatternDelay:
+; Select delay depending on pattern difficulty
     cpi pattern_index, 3
     brlo Delay_750ms
     cpi pattern_index, 6
     brlo Delay_500ms
     rjmp Delay_250ms
 
+
 GameOver:
+; Endless loop (game finished)
     rjmp GameOver
