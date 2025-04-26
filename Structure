@@ -1,0 +1,302 @@
+; LED Pattern Guessing Game - FINAL CLEAN VERSION
+; Author: Nick (commented by ChatGPT for simplicity)
+
+.include "m328Pdef.inc"
+
+; -----------------------------
+; CONSTANTS
+; -----------------------------
+.equ LED0 = 0    ; LED pins (PORTB0-2)
+.equ LED1 = 1
+.equ LED2 = 2
+.equ BTN0 = 2    ; Button pins (PORTD2-4)
+.equ BTN1 = 3
+.equ BTN2 = 4
+
+; Game states
+.equ STATE_WAIT_BUTTON = 0
+.equ STATE_SHOW_PATTERN = 1
+.equ STATE_COLLECT_INPUT = 2
+.equ STATE_CHECK_INPUT = 3
+.equ STATE_SUCCESS = 4
+.equ STATE_FAIL = 5
+
+; -----------------------------
+; DATA SEGMENT (SRAM storage)
+; -----------------------------
+.dseg
+patterns: .byte 9    ; 3 patterns of 3 values each (LED numbers)
+guesses:  .byte 3    ; store user guesses
+
+; -----------------------------
+; CODE SEGMENT
+; -----------------------------
+.cseg
+.org 0x0000
+rjmp RESET
+.org 0x0002
+rjmp INT0_ISR
+.org 0x0004
+rjmp INT1_ISR
+.org 0x000A
+rjmp PCINT_ISR
+
+; -----------------------------
+; REGISTER DEFINITIONS
+; -----------------------------
+.def temp = r16
+.def btn_pressed = r17
+.def pattern_index = r18
+.def guess_index = r19
+.def state = r20
+.def zero = r21       ; holds constant zero (0)
+.def delay_lo = r24   ; delay counter low byte
+.def delay_hi = r25   ; delay counter high byte
+
+; -----------------------------
+; RESET VECTOR - SETUP
+; -----------------------------
+RESET:
+    ; Setup stack
+    ldi temp, LOW(RAMEND)
+    out SPL, temp
+    ldi temp, HIGH(RAMEND)
+    out SPH, temp
+
+    ; Set LEDs (PB0-PB2) as outputs
+    ldi temp, (1<<LED0)|(1<<LED1)|(1<<LED2)
+    out DDRB, temp
+
+    ; Enable internal pull-ups for buttons (PD2-PD4)
+    ldi temp, (1<<BTN0)|(1<<BTN1)|(1<<BTN2)
+    out PORTD, temp
+
+    ; External interrupts INT0, INT1 on falling edge
+    ldi temp, (1<<ISC01)|(1<<ISC11)
+    sts EICRA, temp
+    ldi temp, (1<<INT0)|(1<<INT1)
+    sts EIMSK, temp
+
+    ; Enable pin change interrupt for PD4 (PCINT20)
+    ldi temp, (1<<PCIE2)
+    sts PCICR, temp
+    ldi temp, (1<<PCINT20)
+    sts PCMSK2, temp
+
+    sei  ; Enable global interrupts
+
+    ; Blink all LEDs at startup
+    ldi temp, 0x07
+    out PORTB, temp
+    rcall Delay_750ms
+    clr temp
+    out PORTB, temp
+    rcall Delay_750ms
+
+    ; Load LED patterns into SRAM (using Y pointer)
+    ldi r28, LOW(patterns)
+    ldi r29, HIGH(patterns)
+
+    ldi temp, 0
+    st Y+, temp
+    ldi temp, 1
+    st Y+, temp
+    ldi temp, 2
+    st Y+, temp
+
+    ldi temp, 2
+    st Y+, temp
+    ldi temp, 1
+    st Y+, temp
+    ldi temp, 0
+    st Y+, temp
+
+    ldi temp, 1
+    st Y+, temp
+    ldi temp, 2
+    st Y+, temp
+    ldi temp, 0
+    st Y+, temp
+
+    ; Start game
+    clr pattern_index
+    ldi state, STATE_WAIT_BUTTON
+    rjmp Main_Loop
+
+; -----------------------------
+; MAIN LOOP
+; -----------------------------
+Main_Loop:
+    rjmp Main_Loop
+
+; -----------------------------
+; INTERRUPTS
+; -----------------------------
+INT0_ISR: ldi btn_pressed, 0
+          rjmp Button_Pressed
+
+INT1_ISR: ldi btn_pressed, 1
+          rjmp Button_Pressed
+
+PCINT_ISR:
+    sbic PIND, BTN2
+    reti          ; No button press
+    ldi btn_pressed, 2
+    rjmp Button_Pressed
+
+Button_Pressed:
+    cpi state, STATE_WAIT_BUTTON
+    breq StartPattern
+    cpi state, STATE_COLLECT_INPUT
+    breq RecordGuess
+    reti          ; Ignore button if wrong state
+
+StartPattern:
+    clr guess_index
+    ldi r28, LOW(guesses)
+    ldi r29, HIGH(guesses)
+    ldi state, STATE_SHOW_PATTERN
+    rcall ShowPattern
+    ldi state, STATE_COLLECT_INPUT
+    reti
+
+RecordGuess:
+    st Y+, btn_pressed
+    inc guess_index
+    cpi guess_index, 3
+    breq CheckGuesses
+    reti
+
+CheckGuesses:
+    ldi state, STATE_CHECK_INPUT
+    rcall CompareGuesses
+    reti
+
+; -----------------------------
+; SUBROUTINES
+; -----------------------------
+ShowPattern:
+    ; Set Z to start of correct pattern
+    ldi r30, LOW(patterns)
+    ldi r31, HIGH(patterns)
+    add r30, pattern_index
+    clr zero
+    adc r31, zero
+    clr r22   ; 3-count for pattern
+
+PatternLoop:
+    ld temp, Z+
+    ldi r23, 1
+    lsl r23
+    rol temp
+    out PORTB, temp
+    rcall PatternDelay
+    clr temp
+    out PORTB, temp
+    rcall PatternDelay
+    inc r22
+    cpi r22, 3
+    brne PatternLoop
+    ret
+
+CompareGuesses:
+    ; Set pointers to patterns and guesses
+    ldi r30, LOW(patterns)
+    ldi r31, HIGH(patterns)
+    add r30, pattern_index
+    clr zero
+    adc r31, zero
+
+    ldi r28, LOW(guesses)
+    ldi r29, HIGH(guesses)
+    clr r22   ; compare count
+
+CompareLoop:
+    ld temp, Z+
+    ld r23, Y+
+    cp temp, r23
+    brne PatternFail
+    inc r22
+    cpi r22, 3
+    brne CompareLoop
+
+PatternSuccess:
+    ldi state, STATE_SUCCESS
+    rcall SuccessFlash
+    inc pattern_index
+    cpi pattern_index, 9
+    brlt ReadyNextPattern
+    rjmp GameOver
+
+ReadyNextPattern:
+    ldi state, STATE_WAIT_BUTTON
+    ret
+
+PatternFail:
+    ldi state, STATE_FAIL
+    rcall FailFlash
+    ldi state, STATE_WAIT_BUTTON
+    ret
+
+SuccessFlash:
+    ldi r22, 3
+SuccessLoop:
+    ldi temp, 0x07
+    out PORTB, temp
+    rcall Delay_750ms
+    clr temp
+    out PORTB, temp
+    rcall Delay_750ms
+    dec r22
+    brne SuccessLoop
+    ret
+
+FailFlash:
+    ldi r22, 6
+FailLoop:
+    ldi temp, 0x07
+    out PORTB, temp
+    rcall Delay_250ms
+    clr temp
+    out PORTB, temp
+    rcall Delay_250ms
+    dec r22
+    brne FailLoop
+    ret
+
+; -----------------------------
+; DELAY ROUTINES
+; -----------------------------
+Delay_750ms:
+    ldi delay_lo, 0xFF
+    ldi delay_hi, 0x07
+DelayLoop750:
+    sbiw delay_lo, 1
+    brne DelayLoop750
+    ret
+
+Delay_500ms:
+    ldi delay_lo, 0xFF
+    ldi delay_hi, 0x05
+DelayLoop500:
+    sbiw delay_lo, 1
+    brne DelayLoop500
+    ret
+
+Delay_250ms:
+    ldi delay_lo, 0xFF
+    ldi delay_hi, 0x02
+DelayLoop250:
+    sbiw delay_lo, 1
+    brne DelayLoop250
+    ret
+
+PatternDelay:
+    cpi pattern_index, 3
+    brlo Delay_750ms
+    cpi pattern_index, 6
+    brlo Delay_500ms
+    rjmp Delay_250ms
+
+GameOver:
+    rjmp GameOver
