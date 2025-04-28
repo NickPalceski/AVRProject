@@ -13,7 +13,7 @@
 
 ; --- SRAM Layout ---
 .dseg
-patterns: .byte 3
+patterns: .byte 9
 guesses:  .byte 3
 
 ; --- Code Segment ---
@@ -52,7 +52,7 @@ RESET:
           ldi       temp, (1<<ISC01)|(1<<ISC11)
           sts       EICRA, temp            ; Set INT0 and INT1 to trigger on falling edge
 
-         ldi        temp, (1<<INT0)|(1<<INT1)
+          ldi       temp, (1<<INT0)|(1<<INT1)
           sts       EIMSK, temp            ; Enable INT0 and INT1 interrupts
           
           ldi       temp, (1<<PCIE2)
@@ -79,8 +79,7 @@ RESET:
 
           sei                        ; Enable global interrupts
 
-; --- Main Program ---
-Main_Loop:
+main_loop:
           rcall     Flash_All_LEDs       ; Blink LEDs at startup
 WaitButton:
           sbis      PIND, BTN0
@@ -104,15 +103,14 @@ StartGame:
 
 WaitGuesses:
           cpi       guess_index, 3
-          breq       GotAllGuesses         ; If 3 guesses collected, continue
+          breq      GotAllGuesses         ; If 3 guesses collected, continue
           nop
           rjmp      WaitGuesses           ; Otherwise keep waiting
 
 GotAllGuesses:
           rcall     CheckGuesses         ; Compare guesses to pattern
-          rjmp      Main_Loop             ; Start over
+          rjmp      main_loop            ; Start over
 
-; --- Subroutines ---
 Flash_All_LEDs:
           ldi       temp, 0x07
           out       PORTB, temp            ; Turn on all 3 LEDs
@@ -153,10 +151,10 @@ ShowLED1:
 
 ShowLED2:
           sbi       PORTB, LED2            ; Turn on LED2
-          rcall      ShortDelay
+          rcall     ShortDelay
           cbi       PORTB, LED2            ; Turn off LED2
-          rcall      ShortDelay
-          rjmp       ContinuePattern
+          rcall     ShortDelay
+          rjmp      ContinuePattern
 
 ContinuePattern:
           dec       counter
@@ -171,7 +169,7 @@ ReleaseLoop:
           rjmp      ReleaseLoop           ; Wait until Button 1 released
           sbic      PIND, BTN2
           rjmp      ReleaseLoop           ; Wait until Button 2 released
-          rcall      LongDelay            ; Extra delay after release
+          rcall     LongDelay             ; Extra delay after release
           ret
 
 CheckGuesses:
@@ -193,7 +191,7 @@ CheckLoop:
           ret
 
 Fail:
-          rcall FailFlash
+          rcall     FailFlash
           ret
 
 SuccessFlash:
@@ -223,7 +221,7 @@ FailFlashLoop:
           ret
 
 ShortDelay:                           
-; ShortDelay subroutine (~130ms)
+; ShortDelay (about 130ms)
 ;----------------------------------------------------------------------------------------
           ldi       temp, LOW(2000)               ; Load low byte of compare value (2000 counts)
           sts       OCR1AL, temp                  ; Store to OCR1A Low register
@@ -234,15 +232,15 @@ ShortDelay:
           sts       TCNT1H, temp                  ; Clear Timer1 counter high
 
 WaitShort:
-          in        temp, TIFR1                    ; Read Timer1 interrupt flags
-          sbrs      temp, OCF1A                  ; Skip next if Output Compare A flag not set
-          rjmp      WaitShort                    ; Loop until OCF1A is set (timer match)
+          in        temp, TIFR1                   ; Read Timer1 interrupt flags
+          sbrs      temp, OCF1A                   ; Skip next if Output Compare A flag not set
+          rjmp      WaitShort                     ; Loop until OCF1A is set (timer match)
           ldi       temp, (1<<OCF1A)              ; Load bit to clear flag
           out       TIFR1, temp                   ; Clear OCF1A flag
-          ret                               ; Return from subroutine
+          ret                                     ; Return from subroutine
 
 LongDelay:                            
-; LongDelay subroutine (~400ms)
+; LongDelay (about 400ms)
 ;----------------------------------------------------------------------------------------
          ldi        temp, LOW(6000)               ; Load low byte of compare value (6000 counts)
          sts        OCR1AL, temp                  ; Store to OCR1A Low register
@@ -253,15 +251,15 @@ LongDelay:
          sts        TCNT1H, temp                  ; Clear Timer1 counter high
 
 WaitLong:
-          in        temp, TIFR1                    ; Read Timer1 interrupt flags
-          sbrs      temp, OCF1A                  ; Skip next if Output Compare A flag not set
-          rjmp      WaitLong                     ; Loop until OCF1A is set (timer match)
+          in        temp, TIFR1                   ; Read Timer1 interrupt flags
+          sbrs      temp, OCF1A                   ; Skip next if Output Compare A flag not set
+          rjmp      WaitLong                      ; Loop until OCF1A is set (timer match)
           ldi       temp, (1<<OCF1A)              ; Load bit to clear flag
           out       TIFR1, temp                   ; Clear OCF1A flag
-          ret                               ; Return from subroutine
+          ret                                     ; Return from subroutine
 
 FullSecondDelay:                      
-; FullSecondDelay subroutine (~1 second)
+; FullSecondDelay (about 1 second)
 ;--------------------------------------------------------------------------------------
           ldi       temp, LOW(15624)              ; Load low byte of compare value (15624 counts)
           sts       OCR1AL, temp                  ; Store to OCR1A Low register
@@ -272,15 +270,15 @@ FullSecondDelay:
           sts       TCNT1H, temp                  ; Clear Timer1 counter high
 
 WaitFull:
-          in        temp, TIFR1                    ; Read Timer1 interrupt flags
-          sbrs      temp, OCF1A                  ; Skip next if Output Compare A flag not set
-          rjmp      WaitFull                     ; Loop until OCF1A is set (timer match)
+          in        temp, TIFR1                   ; Read Timer1 interrupt flags
+          sbrs      temp, OCF1A                   ; Skip next if Output Compare A flag not set
+          rjmp      WaitFull                      ; Loop until OCF1A is set (timer match)
           ldi       temp, (1<<OCF1A)              ; Load bit to clear flag
           out       TIFR1, temp                   ; Clear OCF1A flag
-          ret                               ; Return from subroutine
+          ret                                     ; Return from subroutine
 
 debounce_delay:                       
-; Debounce delay (~50ms) to stabilize button presses
+; Debounce delay (about 50ms)
 ;---------------------------------------------------------------------------------------
           ldi       temp, LOW(780)                ; Load low byte of compare value (780 counts)
           sts       OCR1AL, temp                  ; Store to OCR1A Low register
@@ -291,12 +289,12 @@ debounce_delay:
           sts       TCNT1H, temp                  ; Clear Timer1 counter high
 
 WaitDebounce:
-          in        temp, TIFR1                    ; Read Timer1 interrupt flags
-          sbrs      temp, OCF1A                  ; Skip next if Output Compare A flag not set
-          rjmp      WaitDebounce                 ; Loop until OCF1A is set (timer match)
+          in        temp, TIFR1                   ; Read Timer1 interrupt flags
+          sbrs      temp, OCF1A                   ; Skip next if Output Compare A flag not set
+          rjmp      WaitDebounce                  ; Loop until OCF1A is set (timer match)
           ldi       temp, (1<<OCF1A)              ; Load bit to clear flag
           out       TIFR1, temp                   ; Clear OCF1A flag
-          ret                               ; Return from subroutine
+          ret                                     ; Return from subroutine
 
 INT0_ISR:                
 ; ISR for Button 0 (PD2, INT0)
