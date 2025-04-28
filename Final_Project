@@ -108,11 +108,12 @@ StartGame:
 
 WaitGuesses:
     cpi guess_index, 3
-    brne WaitGuesses
+    breq GotAllGuesses
+    nop
+    rjmp WaitGuesses
 
-    ; Got 3 guesses, check them
-    rcall CheckGuesses
-    rjmp Main_Loop
+GotAllGuesses:
+
 
 ; --- Subroutines ---
 
@@ -283,23 +284,35 @@ WaitFull:
 
 INT0_ISR:
     ; BTN0 pressed (PD2)
-    ldi btn_pressed, 0
-    st Y+, btn_pressed
-    inc guess_index
-    reti
+    ldi     btn_pressed, 0                ; Load button value 0
+    ldi     r28, LOW(guesses)             ; Load guesses array low byte
+    ldi     r29, HIGH(guesses)            ; Load guesses array high byte
+    add     r28, guess_index              ; Offset address by current guess index
+    adc     r29, zero                     ; Add carry if needed
+    st      Y, btn_pressed                ; Store button value into guesses
+    inc     guess_index                   ; Increment guess index
+    reti                                  ; Return from interrupt
 
 INT1_ISR:
     ; BTN1 pressed (PD3)
-    ldi btn_pressed, 1
-    st Y+, btn_pressed
-    inc guess_index
-    reti
+    ldi     btn_pressed, 1                ; Load button value 1
+    ldi     r28, LOW(guesses)             ; Load guesses array low byte
+    ldi     r29, HIGH(guesses)            ; Load guesses array high byte
+    add     r28, guess_index              ; Offset address by current guess index
+    adc     r29, zero                     ; Add carry if needed
+    st      Y, btn_pressed                ; Store button value into guesses
+    inc     guess_index                   ; Increment guess index
+    reti                                  ; Return from interrupt
 
 PCINT2_ISR:
     ; BTN2 pressed (PD4)
-    sbic PIND, BTN2
+    sbic    PIND, BTN2                    ; Skip if still high (not pressed)
     reti
-    ldi btn_pressed, 2
-    st Y+, btn_pressed
-    inc guess_index
-    reti
+    ldi     btn_pressed, 2                ; Load button value 2
+    ldi     r28, LOW(guesses)             ; Load guesses array low byte
+    ldi     r29, HIGH(guesses)            ; Load guesses array high byte
+    add     r28, guess_index              ; Offset address by current guess index
+    adc     r29, zero                     ; Add carry if needed
+    st      Y, btn_pressed                ; Store button value into guesses
+    inc     guess_index                   ; Increment guess index
+    reti                                  ; Return from interrupt
