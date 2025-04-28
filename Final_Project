@@ -1,7 +1,9 @@
-; Simon Says Game - FINAL WITH INTERRUPTS VERSION
-.include "m328pdef.inc"
-
-; --- Pin Definitions ---
+;
+; main.asm
+;
+; Authors: Nicholas Palceski, Jacob Schmidt, Lentz Fortune
+; DESC   : Simon Says Game 
+;
 .equ LED0 = 0
 .equ LED1 = 1
 .equ LED2 = 2
@@ -20,6 +22,7 @@ guesses:  .byte 3
 .def counter = r17
 .def btn_pressed = r18
 .def guess_index = r19
+.def zero = r21
 
 .org 0x0000
 rjmp RESET
@@ -31,169 +34,161 @@ rjmp INT1_ISR     ; Button 1 interrupt
 rjmp PCINT2_ISR   ; Button 2 interrupt (pin change interrupt)
 
 RESET:
-    ; Stack pointer
-    ldi temp, LOW(RAMEND)
-    out SPL, temp
+    ldi temp, LOW(RAMEND)      
+    out SPL, temp              ; Set Stack Pointer low byte
     ldi temp, HIGH(RAMEND)
-    out SPH, temp
+    out SPH, temp              ; Set Stack Pointer high byte
 
-    ; LEDs output
     ldi temp, (1<<LED0)|(1<<LED1)|(1<<LED2)
-    out DDRB, temp
+    out DDRB, temp             ; Set PB0, PB1, PB2 as outputs
 
-    ; Buttons pullups
     ldi temp, (1<<BTN0)|(1<<BTN1)|(1<<BTN2)
-    out PORTD, temp
+    out PORTD, temp            ; Enable pull-up resistors on PD2-PD4
 
-    ; Buttons as inputs
-    cbi DDRD, DDD2
-    cbi DDRD, DDD3
-    cbi DDRD, DDD4
+    cbi DDRD, DDD2             
+    cbi DDRD, DDD3             
+    cbi DDRD, DDD4             ; Configure PD2, PD3, PD4 as inputs
 
-    ; Enable INT0 and INT1 interrupts (falling edge)
     ldi temp, (1<<ISC01)|(1<<ISC11)
-    sts EICRA, temp
+    sts EICRA, temp            ; Set INT0 and INT1 to trigger on falling edge
+
     ldi temp, (1<<INT0)|(1<<INT1)
-    sts EIMSK, temp
+    sts EIMSK, temp            ; Enable INT0 and INT1 interrupts
 
-    ; Enable PCINT20 (for PD4)
     ldi temp, (1<<PCIE2)
-    sts PCICR, temp
+    sts PCICR, temp            ; Enable PCINT2 interrupt group (for PD4)
+
     ldi temp, (1<<PCINT20)
-    sts PCMSK2, temp
+    sts PCMSK2, temp           ; Unmask PCINT20 specifically (PD4)
 
-    ; Timer1 CTC Mode setup
     ldi temp, (1<<WGM12)
-    sts TCCR1B, temp
+    sts TCCR1B, temp           ; Set Timer1 to CTC mode (Clear Timer on Compare Match)
+
     ldi temp, (1<<CS12)|(1<<CS10)|(1<<WGM12)
-    sts TCCR1B, temp
+    sts TCCR1B, temp           ; Set Timer1 prescaler to 1024
 
-    ; Load pattern
     ldi r30, LOW(patterns)
-    ldi r31, HIGH(patterns)
+    ldi r31, HIGH(patterns)    ; Set Z-pointer to start of patterns array
+
     ldi temp, 0
-    st Z+, temp
+    st Z+, temp                ; Store pattern[0] = 0
     ldi temp, 1
-    st Z+, temp
+    st Z+, temp                ; Store pattern[1] = 1
     ldi temp, 2
-    st Z+, temp
+    st Z+, temp                ; Store pattern[2] = 2
 
-    ; Enable global interrupts
-    sei
+    sei                        ; Enable global interrupts
 
+; --- Main Program ---
 Main_Loop:
-    rcall Flash_All_LEDs
-
+    rcall Flash_All_LEDs       ; Blink LEDs at startup
 WaitButton:
     sbis PIND, BTN0
-    rjmp StartGame
+    rjmp StartGame             ; If Button 0 pressed, start game
     sbis PIND, BTN1
-    rjmp StartGame
+    rjmp StartGame             ; If Button 1 pressed, start game
     sbis PIND, BTN2
-    rjmp StartGame
-    rjmp WaitButton
+    rjmp StartGame             ; If Button 2 pressed, start game
+    rjmp WaitButton            ; Otherwise keep checking
 
 StartGame:
-    rcall ShortDelay
-    rcall ShowPattern
-    rcall FullSecondDelay
+    rcall ShortDelay           ; Short delay before starting pattern
+    rcall ShowPattern          ; Show correct pattern
+    rcall FullSecondDelay      ; Pause 1 second after pattern display
 
-    ; Force release all buttons
-    rcall WaitRelease
+    rcall WaitRelease          ; Force player to release all buttons first
 
-    ; Start guessing
-    clr guess_index
+    clr guess_index            ; Reset guess counter to 0
     ldi r28, LOW(guesses)
-    ldi r29, HIGH(guesses)
+    ldi r29, HIGH(guesses)      ; Set Y-pointer to guesses array
 
 WaitGuesses:
     cpi guess_index, 3
-    breq GotAllGuesses
+    breq GotAllGuesses         ; If 3 guesses collected, continue
     nop
-    rjmp WaitGuesses
+    rjmp WaitGuesses           ; Otherwise keep waiting
 
 GotAllGuesses:
-
+    rcall CheckGuesses         ; Compare guesses to pattern
+    rjmp Main_Loop             ; Start over
 
 ; --- Subroutines ---
-
 Flash_All_LEDs:
     ldi temp, 0x07
-    out PORTB, temp
+    out PORTB, temp            ; Turn on all 3 LEDs
     rcall ShortDelay
     clr temp
-    out PORTB, temp
+    out PORTB, temp            ; Turn off all LEDs
     rcall ShortDelay
     ret
 
 ShowPattern:
     ldi r28, LOW(patterns)
-    ldi r29, HIGH(patterns)
-    ldi counter, 3
+    ldi r29, HIGH(patterns)    ; Set Y-pointer to patterns
+    ldi counter, 3             ; 3 LEDs to show
 
 ShowPatternLoop:
-    ld temp, Y+
+    ld temp, Y+                ; Load next pattern step
     cpi temp, 0
-    breq ShowLED0
+    breq ShowLED0              ; Show LED0 if 0
     cpi temp, 1
-    breq ShowLED1
+    breq ShowLED1              ; Show LED1 if 1
     cpi temp, 2
-    breq ShowLED2
+    breq ShowLED2              ; Show LED2 if 2
     rjmp ContinuePattern
 
 ShowLED0:
-    sbi PORTB, LED0
+    sbi PORTB, LED0            ; Turn on LED0
     rcall ShortDelay
-    cbi PORTB, LED0
+    cbi PORTB, LED0            ; Turn off LED0
     rcall ShortDelay
     rjmp ContinuePattern
 
 ShowLED1:
-    sbi PORTB, LED1
+    sbi PORTB, LED1            ; Turn on LED1
     rcall ShortDelay
-    cbi PORTB, LED1
+    cbi PORTB, LED1            ; Turn off LED1
     rcall ShortDelay
     rjmp ContinuePattern
 
 ShowLED2:
-    sbi PORTB, LED2
+    sbi PORTB, LED2            ; Turn on LED2
     rcall ShortDelay
-    cbi PORTB, LED2
+    cbi PORTB, LED2            ; Turn off LED2
     rcall ShortDelay
     rjmp ContinuePattern
 
 ContinuePattern:
     dec counter
-    brne ShowPatternLoop
+    brne ShowPatternLoop       ; Loop until 3 LEDs shown
     ret
 
 WaitRelease:
 ReleaseLoop:
     sbic PIND, BTN0
-    rjmp ReleaseLoop
+    rjmp ReleaseLoop           ; Wait until Button 0 released
     sbic PIND, BTN1
-    rjmp ReleaseLoop
+    rjmp ReleaseLoop           ; Wait until Button 1 released
     sbic PIND, BTN2
-    rjmp ReleaseLoop
-    rcall LongDelay
+    rjmp ReleaseLoop           ; Wait until Button 2 released
+    rcall LongDelay            ; Extra delay after release
     ret
 
 CheckGuesses:
     ldi r30, LOW(patterns)
-    ldi r31, HIGH(patterns)
+    ldi r31, HIGH(patterns)    ; Set Z-pointer to patterns
     ldi r28, LOW(guesses)
-    ldi r29, HIGH(guesses)
-    ldi counter, 3
+    ldi r29, HIGH(guesses)     ; Set Y-pointer to guesses
+    ldi counter, 3             ; 3 guesses to compare
 
 CheckLoop:
     ld temp, Z+
-    ld btn_pressed, Y+
+    ld btn_pressed, Y+         ; Load pattern and guess
     cp temp, btn_pressed
-    brne Fail
+    brne Fail                  ; If mismatch, fail
 
     dec counter
-    brne CheckLoop
-
+    brne CheckLoop             ; Keep comparing
     rcall SuccessFlash
     ret
 
@@ -202,7 +197,7 @@ Fail:
     ret
 
 SuccessFlash:
-    ldi counter, 3
+    ldi counter, 3             ; Blink 3 times
 SuccessFlashLoop:
     ldi temp, 0x07
     out PORTB, temp
@@ -215,7 +210,7 @@ SuccessFlashLoop:
     ret
 
 FailFlash:
-    ldi counter, 6
+    ldi counter, 6             ; Blink 6 times
 FailFlashLoop:
     ldi temp, 0x07
     out PORTB, temp
@@ -227,92 +222,119 @@ FailFlashLoop:
     brne FailFlashLoop
     ret
 
-; --- Timer1 CTC Delay Subroutines ---
-
-ShortDelay:
-    ldi temp, LOW(3906)
-    sts OCR1AL, temp
-    ldi temp, HIGH(3906)
-    sts OCR1AH, temp
-    clr temp
-    sts TCNT1L, temp
-    sts TCNT1H, temp
+ShortDelay:                           
+; ShortDelay subroutine (~130ms)
+;----------------------------------------------------------------------------------------
+    ldi temp, LOW(2000)               ; Load low byte of compare value (2000 counts)
+    sts OCR1AL, temp                  ; Store to OCR1A Low register
+    ldi temp, HIGH(2000)              ; Load high byte of compare value
+    sts OCR1AH, temp                  ; Store to OCR1A High register
+    clr temp                          ; Clear temp
+    sts TCNT1L, temp                  ; Clear Timer1 counter low
+    sts TCNT1H, temp                  ; Clear Timer1 counter high
 
 WaitShort:
-    in temp, TIFR1
-    sbrs temp, OCF1A
-    rjmp WaitShort
-    ldi temp, (1<<OCF1A)
-    out TIFR1, temp
-    ret
+    in temp, TIFR1                    ; Read Timer1 interrupt flags
+    sbrs temp, OCF1A                  ; Skip next if Output Compare A flag not set
+    rjmp WaitShort                    ; Loop until OCF1A is set (timer match)
+    ldi temp, (1<<OCF1A)              ; Load bit to clear flag
+    out TIFR1, temp                   ; Clear OCF1A flag
+    ret                               ; Return from subroutine
 
-LongDelay:
-    ldi temp, LOW(11718)
-    sts OCR1AL, temp
-    ldi temp, HIGH(11718)
-    sts OCR1AH, temp
-    clr temp
-    sts TCNT1L, temp
-    sts TCNT1H, temp
+LongDelay:                            
+; LongDelay subroutine (~400ms)
+;----------------------------------------------------------------------------------------
+    ldi temp, LOW(6000)               ; Load low byte of compare value (6000 counts)
+    sts OCR1AL, temp                  ; Store to OCR1A Low register
+    ldi temp, HIGH(6000)              ; Load high byte of compare value
+    sts OCR1AH, temp                  ; Store to OCR1A High register
+    clr temp                          ; Clear temp
+    sts TCNT1L, temp                  ; Clear Timer1 counter low
+    sts TCNT1H, temp                  ; Clear Timer1 counter high
 
 WaitLong:
-    in temp, TIFR1
-    sbrs temp, OCF1A
-    rjmp WaitLong
-    ldi temp, (1<<OCF1A)
-    out TIFR1, temp
-    ret
+    in temp, TIFR1                    ; Read Timer1 interrupt flags
+    sbrs temp, OCF1A                  ; Skip next if Output Compare A flag not set
+    rjmp WaitLong                     ; Loop until OCF1A is set (timer match)
+    ldi temp, (1<<OCF1A)              ; Load bit to clear flag
+    out TIFR1, temp                   ; Clear OCF1A flag
+    ret                               ; Return from subroutine
 
-FullSecondDelay:
-    ldi temp, LOW(15624)
-    sts OCR1AL, temp
-    ldi temp, HIGH(15624)
-    sts OCR1AH, temp
-    clr temp
-    sts TCNT1L, temp
-    sts TCNT1H, temp
+FullSecondDelay:                      
+; FullSecondDelay subroutine (~1 second)
+;--------------------------------------------------------------------------------------
+    ldi temp, LOW(15624)              ; Load low byte of compare value (15624 counts)
+    sts OCR1AL, temp                  ; Store to OCR1A Low register
+    ldi temp, HIGH(15624)             ; Load high byte of compare value
+    sts OCR1AH, temp                  ; Store to OCR1A High register
+    clr temp                          ; Clear temp
+    sts TCNT1L, temp                  ; Clear Timer1 counter low
+    sts TCNT1H, temp                  ; Clear Timer1 counter high
 
 WaitFull:
-    in temp, TIFR1
-    sbrs temp, OCF1A
-    rjmp WaitFull
-    ldi temp, (1<<OCF1A)
-    out TIFR1, temp
-    ret
+    in temp, TIFR1                    ; Read Timer1 interrupt flags
+    sbrs temp, OCF1A                  ; Skip next if Output Compare A flag not set
+    rjmp WaitFull                     ; Loop until OCF1A is set (timer match)
+    ldi temp, (1<<OCF1A)              ; Load bit to clear flag
+    out TIFR1, temp                   ; Clear OCF1A flag
+    ret                               ; Return from subroutine
 
-; --- INTERRUPT SERVICE ROUTINES ---
+debounce_delay:                       
+; Debounce delay (~50ms) to stabilize button presses
+;---------------------------------------------------------------------------------------
+    ldi temp, LOW(780)                ; Load low byte of compare value (780 counts)
+    sts OCR1AL, temp                  ; Store to OCR1A Low register
+    ldi temp, HIGH(780)               ; Load high byte of compare value
+    sts OCR1AH, temp                  ; Store to OCR1A High register
+    clr temp                          ; Clear temp
+    sts TCNT1L, temp                  ; Clear Timer1 counter low
+    sts TCNT1H, temp                  ; Clear Timer1 counter high
 
-INT0_ISR:
-    ; BTN0 pressed (PD2)
-    ldi     btn_pressed, 0                ; Load button value 0
-    ldi     r28, LOW(guesses)             ; Load guesses array low byte
-    ldi     r29, HIGH(guesses)            ; Load guesses array high byte
-    add     r28, guess_index              ; Offset address by current guess index
-    adc     r29, zero                     ; Add carry if needed
-    st      Y, btn_pressed                ; Store button value into guesses
-    inc     guess_index                   ; Increment guess index
-    reti                                  ; Return from interrupt
+WaitDebounce:
+    in temp, TIFR1                    ; Read Timer1 interrupt flags
+    sbrs temp, OCF1A                  ; Skip next if Output Compare A flag not set
+    rjmp WaitDebounce                 ; Loop until OCF1A is set (timer match)
+    ldi temp, (1<<OCF1A)              ; Load bit to clear flag
+    out TIFR1, temp                   ; Clear OCF1A flag
+    ret                               ; Return from subroutine
 
-INT1_ISR:
-    ; BTN1 pressed (PD3)
-    ldi     btn_pressed, 1                ; Load button value 1
-    ldi     r28, LOW(guesses)             ; Load guesses array low byte
-    ldi     r29, HIGH(guesses)            ; Load guesses array high byte
-    add     r28, guess_index              ; Offset address by current guess index
-    adc     r29, zero                     ; Add carry if needed
-    st      Y, btn_pressed                ; Store button value into guesses
-    inc     guess_index                   ; Increment guess index
-    reti                                  ; Return from interrupt
+INT0_ISR:                
+; ISR for Button 0 (PD2, INT0)
+;--------------------------------------------------------------------------------------              
+    ldi btn_pressed, 0                 ; Load button 0 value
+    ldi r28, LOW(guesses)              ; Load guesses array address low byte
+    ldi r29, HIGH(guesses)             ; Load guesses array address high byte
+    add r28, guess_index               ; Offset address by guess index
+    adc r29, zero                      ; Add carry if necessary
+    st Y, btn_pressed                  ; Store button pressed into guesses array
+    inc guess_index                    ; Increment guess index
+    rcall debounce_delay               ; Debounce button press
+    reti                               ; Return from interrupt
 
-PCINT2_ISR:
-    ; BTN2 pressed (PD4)
-    sbic    PIND, BTN2                    ; Skip if still high (not pressed)
+INT1_ISR:                              
+; ISR for Button 1 (PD3, INT1)
+;--------------------------------------------------------------------------------------  
+    ldi btn_pressed, 1                 ; Load button 1 value
+    ldi r28, LOW(guesses)
+    ldi r29, HIGH(guesses)
+    add r28, guess_index
+    adc r29, zero
+    st Y, btn_pressed
+    inc guess_index
+    rcall debounce_delay
     reti
-    ldi     btn_pressed, 2                ; Load button value 2
-    ldi     r28, LOW(guesses)             ; Load guesses array low byte
-    ldi     r29, HIGH(guesses)            ; Load guesses array high byte
-    add     r28, guess_index              ; Offset address by current guess index
-    adc     r29, zero                     ; Add carry if needed
-    st      Y, btn_pressed                ; Store button value into guesses
-    inc     guess_index                   ; Increment guess index
-    reti                                  ; Return from interrupt
+
+PCINT2_ISR:                            
+; ISR for Button 2 (PD4, PCINT20)
+;--------------------------------------------------------------------------------------  
+    sbic PIND, BTN2                    ; If pin still high, ignore
+    reti
+    ldi btn_pressed, 2                 ; Load button 2 value
+    ldi r28, LOW(guesses)
+    ldi r29, HIGH(guesses)
+    add r28, guess_index
+    adc r29, zero
+    st Y, btn_pressed
+    inc guess_index
+    rcall debounce_delay
+    reti
