@@ -25,13 +25,13 @@ guesses:  .byte 3
 .def zero = r21
 
 .org 0x0000
-rjmp RESET
+     rjmp RESET
 .org 0x0002
-rjmp INT0_ISR     ; Button 0 interrupt
+     rjmp INT0_ISR     ; Button 0 interrupt
 .org 0x0004
-rjmp INT1_ISR     ; Button 1 interrupt
+     rjmp INT1_ISR     ; Button 1 interrupt
 .org 0x000A
-rjmp PCINT2_ISR   ; Button 2 interrupt (pin change interrupt)
+     rjmp PCINT2_ISR   ; Button 2 interrupt (pin change interrupt)
 
 RESET:
           ldi       temp, LOW(RAMEND)      
