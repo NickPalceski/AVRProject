@@ -1,1 +1,305 @@
+; Simon Says Game - FINAL WITH INTERRUPTS VERSION
+.include "m328pdef.inc"
 
+; --- Pin Definitions ---
+.equ LED0 = 0
+.equ LED1 = 1
+.equ LED2 = 2
+.equ BTN0 = 2      ; PD2 (INT0)
+.equ BTN1 = 3      ; PD3 (INT1)
+.equ BTN2 = 4      ; PD4 (PCINT20)
+
+; --- SRAM Layout ---
+.dseg
+patterns: .byte 3
+guesses:  .byte 3
+
+; --- Code Segment ---
+.cseg
+.def temp = r16
+.def counter = r17
+.def btn_pressed = r18
+.def guess_index = r19
+
+.org 0x0000
+rjmp RESET
+.org 0x0002
+rjmp INT0_ISR     ; Button 0 interrupt
+.org 0x0004
+rjmp INT1_ISR     ; Button 1 interrupt
+.org 0x000A
+rjmp PCINT2_ISR   ; Button 2 interrupt (pin change interrupt)
+
+RESET:
+    ; Stack pointer
+    ldi temp, LOW(RAMEND)
+    out SPL, temp
+    ldi temp, HIGH(RAMEND)
+    out SPH, temp
+
+    ; LEDs output
+    ldi temp, (1<<LED0)|(1<<LED1)|(1<<LED2)
+    out DDRB, temp
+
+    ; Buttons pullups
+    ldi temp, (1<<BTN0)|(1<<BTN1)|(1<<BTN2)
+    out PORTD, temp
+
+    ; Buttons as inputs
+    cbi DDRD, DDD2
+    cbi DDRD, DDD3
+    cbi DDRD, DDD4
+
+    ; Enable INT0 and INT1 interrupts (falling edge)
+    ldi temp, (1<<ISC01)|(1<<ISC11)
+    sts EICRA, temp
+    ldi temp, (1<<INT0)|(1<<INT1)
+    sts EIMSK, temp
+
+    ; Enable PCINT20 (for PD4)
+    ldi temp, (1<<PCIE2)
+    sts PCICR, temp
+    ldi temp, (1<<PCINT20)
+    sts PCMSK2, temp
+
+    ; Timer1 CTC Mode setup
+    ldi temp, (1<<WGM12)
+    sts TCCR1B, temp
+    ldi temp, (1<<CS12)|(1<<CS10)|(1<<WGM12)
+    sts TCCR1B, temp
+
+    ; Load pattern
+    ldi r30, LOW(patterns)
+    ldi r31, HIGH(patterns)
+    ldi temp, 0
+    st Z+, temp
+    ldi temp, 1
+    st Z+, temp
+    ldi temp, 2
+    st Z+, temp
+
+    ; Enable global interrupts
+    sei
+
+Main_Loop:
+    rcall Flash_All_LEDs
+
+WaitButton:
+    sbis PIND, BTN0
+    rjmp StartGame
+    sbis PIND, BTN1
+    rjmp StartGame
+    sbis PIND, BTN2
+    rjmp StartGame
+    rjmp WaitButton
+
+StartGame:
+    rcall ShortDelay
+    rcall ShowPattern
+    rcall FullSecondDelay
+
+    ; Force release all buttons
+    rcall WaitRelease
+
+    ; Start guessing
+    clr guess_index
+    ldi r28, LOW(guesses)
+    ldi r29, HIGH(guesses)
+
+WaitGuesses:
+    cpi guess_index, 3
+    brne WaitGuesses
+
+    ; Got 3 guesses, check them
+    rcall CheckGuesses
+    rjmp Main_Loop
+
+; --- Subroutines ---
+
+Flash_All_LEDs:
+    ldi temp, 0x07
+    out PORTB, temp
+    rcall ShortDelay
+    clr temp
+    out PORTB, temp
+    rcall ShortDelay
+    ret
+
+ShowPattern:
+    ldi r28, LOW(patterns)
+    ldi r29, HIGH(patterns)
+    ldi counter, 3
+
+ShowPatternLoop:
+    ld temp, Y+
+    cpi temp, 0
+    breq ShowLED0
+    cpi temp, 1
+    breq ShowLED1
+    cpi temp, 2
+    breq ShowLED2
+    rjmp ContinuePattern
+
+ShowLED0:
+    sbi PORTB, LED0
+    rcall ShortDelay
+    cbi PORTB, LED0
+    rcall ShortDelay
+    rjmp ContinuePattern
+
+ShowLED1:
+    sbi PORTB, LED1
+    rcall ShortDelay
+    cbi PORTB, LED1
+    rcall ShortDelay
+    rjmp ContinuePattern
+
+ShowLED2:
+    sbi PORTB, LED2
+    rcall ShortDelay
+    cbi PORTB, LED2
+    rcall ShortDelay
+    rjmp ContinuePattern
+
+ContinuePattern:
+    dec counter
+    brne ShowPatternLoop
+    ret
+
+WaitRelease:
+ReleaseLoop:
+    sbic PIND, BTN0
+    rjmp ReleaseLoop
+    sbic PIND, BTN1
+    rjmp ReleaseLoop
+    sbic PIND, BTN2
+    rjmp ReleaseLoop
+    rcall LongDelay
+    ret
+
+CheckGuesses:
+    ldi r30, LOW(patterns)
+    ldi r31, HIGH(patterns)
+    ldi r28, LOW(guesses)
+    ldi r29, HIGH(guesses)
+    ldi counter, 3
+
+CheckLoop:
+    ld temp, Z+
+    ld btn_pressed, Y+
+    cp temp, btn_pressed
+    brne Fail
+
+    dec counter
+    brne CheckLoop
+
+    rcall SuccessFlash
+    ret
+
+Fail:
+    rcall FailFlash
+    ret
+
+SuccessFlash:
+    ldi counter, 3
+SuccessFlashLoop:
+    ldi temp, 0x07
+    out PORTB, temp
+    rcall LongDelay
+    clr temp
+    out PORTB, temp
+    rcall LongDelay
+    dec counter
+    brne SuccessFlashLoop
+    ret
+
+FailFlash:
+    ldi counter, 6
+FailFlashLoop:
+    ldi temp, 0x07
+    out PORTB, temp
+    rcall ShortDelay
+    clr temp
+    out PORTB, temp
+    rcall ShortDelay
+    dec counter
+    brne FailFlashLoop
+    ret
+
+; --- Timer1 CTC Delay Subroutines ---
+
+ShortDelay:
+    ldi temp, LOW(3906)
+    sts OCR1AL, temp
+    ldi temp, HIGH(3906)
+    sts OCR1AH, temp
+    clr temp
+    sts TCNT1L, temp
+    sts TCNT1H, temp
+
+WaitShort:
+    in temp, TIFR1
+    sbrs temp, OCF1A
+    rjmp WaitShort
+    ldi temp, (1<<OCF1A)
+    out TIFR1, temp
+    ret
+
+LongDelay:
+    ldi temp, LOW(11718)
+    sts OCR1AL, temp
+    ldi temp, HIGH(11718)
+    sts OCR1AH, temp
+    clr temp
+    sts TCNT1L, temp
+    sts TCNT1H, temp
+
+WaitLong:
+    in temp, TIFR1
+    sbrs temp, OCF1A
+    rjmp WaitLong
+    ldi temp, (1<<OCF1A)
+    out TIFR1, temp
+    ret
+
+FullSecondDelay:
+    ldi temp, LOW(15624)
+    sts OCR1AL, temp
+    ldi temp, HIGH(15624)
+    sts OCR1AH, temp
+    clr temp
+    sts TCNT1L, temp
+    sts TCNT1H, temp
+
+WaitFull:
+    in temp, TIFR1
+    sbrs temp, OCF1A
+    rjmp WaitFull
+    ldi temp, (1<<OCF1A)
+    out TIFR1, temp
+    ret
+
+; --- INTERRUPT SERVICE ROUTINES ---
+
+INT0_ISR:
+    ; BTN0 pressed (PD2)
+    ldi btn_pressed, 0
+    st Y+, btn_pressed
+    inc guess_index
+    reti
+
+INT1_ISR:
+    ; BTN1 pressed (PD3)
+    ldi btn_pressed, 1
+    st Y+, btn_pressed
+    inc guess_index
+    reti
+
+PCINT2_ISR:
+    ; BTN2 pressed (PD4)
+    sbic PIND, BTN2
+    reti
+    ldi btn_pressed, 2
+    st Y+, btn_pressed
+    inc guess_index
+    reti
